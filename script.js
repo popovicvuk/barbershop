@@ -54,11 +54,15 @@ document.addEventListener('DOMContentLoaded', () => {
     const months = ['Januar', 'Februar', 'Mart', 'April', 'Maj', 'Jun', 'Jul', 'Avgust', 'Septembar', 'Oktobar', 'Novembar', 'Decembar'];
 
     // ─── API Helper Functions ─────────────────────────────────────────────────
+    
+    // Auto-detect server base if using Live Server
+    const isLocalhost = window.location.hostname === '127.0.0.1' || window.location.hostname === 'localhost';
+    const API_BASE = isLocalhost && window.location.port !== '3000' ? 'http://localhost:3000' : '';
 
     // Fetch bookings for a specific date, returns object { "10:00": "Marko", ... }
     async function getBookingsForDate(dateStr) {
         try {
-            const res = await fetch(`/api/bookings?date=${dateStr}`);
+            const res = await fetch(`${API_BASE}/api/bookings?date=${dateStr}`);
             const json = await res.json();
             if (!json.success) return {};
             // Convert array rows to { time: client_name } map
@@ -75,7 +79,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     async function saveBooking(dateStr, timeStr, name) {
         try {
-            const res = await fetch('/api/bookings', {
+            const res = await fetch(`${API_BASE}/api/bookings`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ date: dateStr, time: timeStr, client_name: name })
@@ -83,18 +87,24 @@ document.addEventListener('DOMContentLoaded', () => {
             const json = await res.json();
             if (!json.success) {
                 console.error('Greška pri čuvanju termina:', json.error);
-                return false;
+                // Alert only if it's not a Conflict
+                if (res.status !== 409) {
+                   alert('Greška servera: ' + json.error);
+                   return { ok: false, errorType: 'server' };
+                }
+                return { ok: false, errorType: 'conflict' };
             }
-            return true;
+            return { ok: true };
         } catch (err) {
             console.error('Mrežna greška:', err);
-            return false;
+            alert('Greška u komunikaciji sa serverom. Da li ste pokrenuli server.js?');
+            return { ok: false, errorType: 'network' };
         }
     }
 
     async function updateBooking(dateStr, timeStr, newName) {
         try {
-            const res = await fetch(`/api/bookings/${dateStr}/${timeStr}`, {
+            const res = await fetch(`${API_BASE}/api/bookings/${dateStr}/${timeStr}`, {
                 method: 'PUT',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ client_name: newName })
@@ -109,7 +119,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     async function removeBooking(dateStr, timeStr) {
         try {
-            const res = await fetch(`/api/bookings/${dateStr}/${timeStr}`, {
+            const res = await fetch(`${API_BASE}/api/bookings/${dateStr}/${timeStr}`, {
                 method: 'DELETE'
             });
             const json = await res.json();
@@ -248,21 +258,22 @@ document.addEventListener('DOMContentLoaded', () => {
         btnConfirmBooking.textContent = 'Čuvam...';
 
         const dateKey = getFormattedDateForKey(selectedDate);
-        const ok = await saveBooking(dateKey, selectedTime, name);
+        const result = await saveBooking(dateKey, selectedTime, name);
 
         btnConfirmBooking.disabled = false;
         btnConfirmBooking.textContent = 'Potvrdi Termin';
 
-        if (ok) {
+        if (result.ok) {
             const day = String(selectedDate.getDate()).padStart(2, '0');
             const monthName = months[selectedDate.getMonth()];
             confirmationDetails.textContent = `Vidimo se ${day}. ${monthName} u ${selectedTime}h, ${name}.`;
             goToStep(4);
-        } else {
-            alert('Termin je u međuvremenu zauzet. Molimo odaberite drugi termin.');
+        } else if (result.errorType === 'conflict') {
+            alert('Termin je u međuvremenu zauzet ili blokiran. Molimo odaberite drugi termin.');
             generateTimeSlots(selectedDate);
             goToStep(2);
         }
+        // If it's network or server error, we leave them on the current step so they can try again once they fix the server.
     });
 
     function goToStep(stepNumber) {

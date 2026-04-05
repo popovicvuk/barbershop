@@ -1,9 +1,11 @@
 const express = require('express');
 const fs = require('fs');
 const path = require('path');
+require('dotenv').config();
 
 const app = express();
-const PORT = 3000;
+const PORT = process.env.PORT || 3000;
+const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'admin123';
 const DB_FILE = path.join(__dirname, 'database.json');
 
 // --- Simple JSON Database Wrapper ---
@@ -52,6 +54,15 @@ function cleanupExpiredBookings() {
 cleanupExpiredBookings();
 
 // Middleware
+app.use((req, res, next) => {
+  res.header("Access-Control-Allow-Origin", "*");
+  res.header("Access-Control-Allow-Headers", "Origin, X-Requested-With, Content-Type, Accept");
+  res.header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
+  if (req.method === 'OPTIONS') {
+    return res.sendStatus(200);
+  }
+  next();
+});
 app.use(express.json());
 app.use(express.static(path.join(__dirname)));
 
@@ -89,15 +100,29 @@ app.post('/api/bookings', (req, res) => {
     const db = getDb();
     if (!db.bookings[date]) db.bookings[date] = {};
     
-    if (db.bookings[date][time] && db.bookings[date][time] !== 'BLOKIRANO') {
-      return res.status(409).json({ success: false, error: 'Termin je već zauzet.' });
+    const existing = db.bookings[date][time];
+    
+    // Logic: 
+    // 1. If slot is empty, anyone can book.
+    // 2. If slot is 'BLOKIRANO', only admin can overwrite (for now we assume admin POSTs this).
+    //    Actually, we should prevent users from overwriting BLOKIRANO.
+    if (existing) {
+      if (client_name === 'BLOKIRANO') {
+        // Admin is blocking/overwriting
+        db.bookings[date][time] = 'BLOKIRANO';
+      } else if (existing === 'BLOKIRANO') {
+        return res.status(409).json({ success: false, error: 'Termin je blokiran.' });
+      } else {
+        return res.status(409).json({ success: false, error: 'Termin je već zauzet.' });
+      }
+    } else {
+      db.bookings[date][time] = client_name;
     }
     
-    db.bookings[date][time] = client_name;
     saveDb(db);
-    res.json({ success: true, message: 'Termin zakazan.' });
+    res.json({ success: true, message: client_name === 'BLOKIRANO' ? 'Termin blokiran.' : 'Termin zakazan.' });
   } catch (err) {
-    console.error(err);
+    console.error('[POST /api/bookings] Error:', err);
     res.status(500).json({ success: false, error: err.message });
   }
 });
